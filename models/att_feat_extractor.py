@@ -2,15 +2,19 @@ import torch
 import torch.nn as nn
 import torchvision.models as models
 
-class img_feat_extractor(nn.Module):
+class att_feat_extractor(nn.Module):
     def __init__(self, feat, weights = None, train_new = True):
-        super(img_feat_extractor, self).__init__()
+        super(att_feat_extractor, self).__init__()
 
-        image_modules = list(models.resnet50(pretrained=True).children())[:6]
-        image_modules += [
-            nn.Conv2d(512, feat, kernel_size=3, stride=1, padding=1),
+        image_modules = [
+            nn.Conv2d(feat + 1, 128, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True),
+            nn.ReLU(),
+            nn.Conv2d(128, feat, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(feat, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True),
+            nn.ReLU()
         ]
-        self.resnet = nn.Sequential(*image_modules)
+        self.model = nn.Sequential(*image_modules)
 
         if weights is not None and not train_new:
             self.load_state_dict(torch.load(weights))
@@ -23,18 +27,18 @@ class img_feat_extractor(nn.Module):
 
     def forward(self, input):
 
-        return self.resnet(input)
+        return self.model(input)
 
 
-# A = img_feat_extractor(256)
-#
+A = att_feat_extractor(256)
+
 # x = torch.ones([5, 3, 240, 240], device='cpu')
-# y = torch.ones([5, 3, 50, 50], device='cpu')
-#
+y = torch.ones([5, 257, 30, 30], device='cpu')
+
 # print(A(x).shape)
-# print(A(y).shape)
-# #
+print(A(y).shape)
 #
+
 # x = torch.ones(A(x).shape, device='cpu')
 # y = torch.ones(A(y).shape, device='cpu')
 #
