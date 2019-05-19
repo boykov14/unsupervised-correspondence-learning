@@ -12,7 +12,7 @@ def train_ucl():
 
     experiment_name = "test1"
     epochs = 100
-    batch_size = 20
+    batch_size = 10
     random_episodes = 10
 
     n_feat = 256
@@ -34,7 +34,7 @@ def train_ucl():
 
     model_img = img_feat_extractor(n_feat, weights=weights_img, train_new=train_new)
     model_patch = patch_feat_extractor(n_feat, weights=weights_patch, train_new=train_new)
-    model_attention = att_feat_extractor(n_feat, weights=weights_attenton, train_new=train_new)
+    model_attention = att_feat_extractor(2, weights=weights_attenton, train_new=train_new)
 
     model_img = model_img.to(device)
     model_patch = model_patch.to(device)
@@ -45,7 +45,7 @@ def train_ucl():
     optimizer_patch = torch.optim.Adam(model_patch.parameters(), lr=lr)
     optimizer_attention = torch.optim.Adam(model_attention.parameters(), lr=lr)
 
-    dataloader = ImgSeqDataset('D:\\Anton\\data\\hand_gesture_sequences\\test', None, batch_size, transform=transforms_train)
+    dataloader = ImgSeqDataset('D:\\Anton\\data\\hand_gesture_sequences\\train', None, batch_size, transform=transforms_train)
 
     for e in range(epochs):
 
@@ -86,65 +86,95 @@ def random_episode(m_img, m_patch, m_att, imgs, patch_size, device):
     top = random.randint(0, h - new_h)
     left = random.randint(0, w - new_w)
 
+    loc_initial = torch.ones([1, 2], device=device)
+    loc_initial[:,0] *= (top/h * 2 - 1)
+    loc_initial[:,1] *= (left/w * 2 - 1)
+
     # creating mask for patch
     mask = torch.zeros(img_size, device=device)
     mask[:, top: top + new_h, left: left + new_w] = 1
 
-    # extracting nontrivial mask for first image
-
-    img1 = imgs[-1][None,:,:,:]
+    # set up vars for backwards pass
     img_seq = imgs[:-1]
-
-    feat_1, att_1 = transition(m_img, m_patch, m_att, img1, mask, img1)
-
-    # set up vars for backwards pass
-    cur_feat = feat_1
+    img_prev = imgs[-1][None,:,:,:]
+    cur_mask = mask
     feats_back = []
-    att_back = []
-
-    for i, img in enumerate(img_seq):
-        img = img[None,:,:,:]
-        cur_feat, att = transition_feat(m_img, m_att, img, cur_feat)
-        feats_back.append(cur_feat)
-        att_back.append(att)
-
-    # set up vars for backwards pass
-    feats_forwards = []
-    att_forwards = []
+    loc_back = [loc_initial]
 
     for i, img in enumerate(reversed(img_seq)):
+        img = img[None,:,:,:]
+        loc, feat = transition(m_img, m_patch, m_att, img_prev, cur_mask, img)
+        img_prev = img
+        cur_mask = extract_mask(loc, img, patch_size, device)
+        feats_back.append(feat)
+        loc_back.append(loc)
+
+    _, feat = transition(m_img, m_patch, m_att, img_prev, cur_mask, img_prev)
+    feats_back.append(feat)
+
+
+    # set up vars for backwards pass
+    img_seq = imgs[1:]
+    feats_forward = []
+    loc_forward = [loc]
+
+    for i, img in enumerate(img_seq):
         img = img[None, :, :, :]
-        cur_feat, att = transition_feat(m_img, m_att, img, cur_feat)
-        feats_forwards.append(cur_feat)
-        att_forwards.append(att)
+        loc, feat = transition(m_img, m_patch, m_att, img_prev, cur_mask, img)
+        img_prev = img
+        cur_mask = extract_mask(loc, img, patch_size, device)
+        feats_forward.append(feat)
+        loc_forward.append(loc)
 
-    feat_final, att_final = transition_feat(m_img, m_att, img1, cur_feat)
+    _, feat = transition(m_img, m_patch, m_att, img_prev, cur_mask, img_prev)
+    feats_back.append(feat)
 
-    att_info = (att_1, att_final, att_forwards, att_back)
-    feat_info = (feat_1, feat_final, feats_forwards, feats_back)
 
-    loss = compute_loss(feat_info, att_info)
+
+    loc_info = (loc_back, loc_forward)
+    feat_info = (feats_back, feats_forward)
+
+    loss = compute_loss(feat_info, loc_info)
     return loss
 
 
-def compute_loss(feat_info, att_info):
-    a_first, a_last, att_forwards, att_back = att_info
-    f_first, f_last, feats_forwards, feats_back = feat_info
+def extract_mask(loc, img, patch_size, device):
+
+    dimx, dimy = img[0].shape[1:]
+
+    top = torch.round((loc[:, 0] + 1)/2 * dimx).int()
+    left = torch.round((loc[:, 1] + 1)/2 * dimy).int()
+
+
+    new_h, new_w = patch_size
+
+    mask = torch.zeros(img.size(), device=device)
+    mask[:, top: top + new_h, left: left + new_w] = 1
+
+    return mask
+
+
+
+
+def compute_loss(feat_info, loc_info):
+    l_back, l_forward = loc_info
+    f_back, f_forward = feat_info
 
     # criterion_frobenius = loss_criteria()
     criterion_l2 = torch.nn.MSELoss()
 
-    long_loss = criterion_l2(f_last, f_first) + criterion_l2(a_last, a_first)
+    # long_loss = criterion_l2(f_last, f_first) + criterion_l2(a_last, a_first)
 
     main_loss = 0
 
-    for f2, f1 in zip(feats_forwards, reversed(feats_back)):
-        main_loss += criterion_l2(f2, f1)
 
-    for a2, a1 in zip(att_forwards, reversed(att_back)):
-        main_loss += criterion_l2(a2, a1)
+    for f2, f1 in zip(f_forward, reversed(f_back)):
+        main_loss += criterion_l2(f2, f1) * 0.1
 
-    loss = main_loss + 0.1 * long_loss
+    for l2, l1 in zip(l_forward, reversed(l_back)):
+        main_loss += criterion_l2(l2, l1)
+
+    loss = main_loss #+ 0.1 * long_loss
 
     return loss
 
@@ -179,19 +209,19 @@ def transition(m_img, m_patch, m_att, img1, mask, img2):
 
     att_m = compute_attn(f1, f2)
 
-    feat = m_att(torch.cat((att_m, f2), dim=1))
+    x = m_att(att_m)  # m_att(torch.cat((att_m, f2), dim=1))
 
-    return feat, att_m
+    return x, f1
 
-def transition_feat(m_img, m_att, img, f1):
-
-    f2 = m_img(img)
-
-    att_m = compute_attn(f1, f2)
-
-    feat = m_att(torch.cat((att_m, f2), dim=1))
-
-    return feat, att_m
+# def transition_feat(m_img, m_att, img, f1):
+#
+#     f2 = m_img(img)
+#
+#     att_m = compute_attn(f1, f2)
+#
+#     x = m_att(att_m)  # m_att(torch.cat((att_m, f2), dim=1))
+#
+#     return x
 
 def compute_attn(patch_f, img_f):
 
