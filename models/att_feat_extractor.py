@@ -31,6 +31,8 @@ class att_feat_extractor(nn.Module):
         if weights is not None and not train_new:
             self.load_state_dict(torch.load(weights))
 
+        self.weights = weights
+
     def save_model(self, path=None):
         if path is not None:
             torch.save(self.state_dict(), path)

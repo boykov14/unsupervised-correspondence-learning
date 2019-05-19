@@ -18,7 +18,7 @@ def train_ucl():
     n_feat = 256
     img_size = [3, 240,240]
     patch_size = [50, 50]
-    train_new = True
+    train_new = False
     device = 'cuda'
     lr = 0.0001
 
@@ -69,7 +69,7 @@ def train_ucl():
                 optimizer_attention.step()
                 optimizer_attention.zero_grad()
 
-                print("({}/{}) loss: {:.4f}".format(j + 1, random_episode, float(loss)))
+                print("({}/{}) loss: {:.4f}".format(j + 1, random_episodes, float(loss)))
 
             model_patch.save_model()
             model_img.save_model()
@@ -128,21 +128,21 @@ def random_episode(m_img, m_patch, m_att, imgs, patch_size, device):
 
 
 def compute_loss(feat_info, att_info):
-    a_first, a, att_forwards, att_back = att_info
+    a_first, a_last, att_forwards, att_back = att_info
     f_first, f_last, feats_forwards, feats_back = feat_info
 
     # criterion_frobenius = loss_criteria()
     criterion_l2 = torch.nn.MSELoss()
 
-    long_loss = criterion_l2(f_last, f_first) + criterion_l2
+    long_loss = criterion_l2(f_last, f_first) + criterion_l2(a_last, a_first)
 
     main_loss = 0
 
-    for f in feats_forwards:
-        main_loss += criterion_l2(f, f_first)
+    for f2, f1 in zip(feats_forwards, reversed(feats_back)):
+        main_loss += criterion_l2(f2, f1)
 
-    for f in feats_back:
-        main_loss += criterion_l2(f, f_first)
+    for a2, a1 in zip(att_forwards, reversed(att_back)):
+        main_loss += criterion_l2(a2, a1)
 
     loss = main_loss + 0.1 * long_loss
 
