@@ -12,7 +12,7 @@ class att_feat_extractor(nn.Module):
             nn.Linear(256, 64),
             nn.ReLU(),
             nn.Linear(64, feat),
-            nn.Sigmoid(),
+            #nn.Sigmoid(),
         ]
         self.model = nn.Sequential(*image_modules)
 
